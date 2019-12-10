@@ -15,13 +15,17 @@ DVC2 is the second version of DVC, as the first version did not work out too wel
 To compile from source you need
 
 > C Compiler (such as gcc)
+>
 > NVidia GPU
+>
 > Windows 10 (Should work on older versions, but has not been tested)
 
 ### Installing
 
 > Download/Clone this repository to your desired location
+>
 > Open Command Prompt and navigate to the DVC folder
+>
 > Run make.bat
 
 There should now be a file called dvc.exe
