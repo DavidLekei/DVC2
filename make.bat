@@ -1,0 +1,1 @@
+gcc -Wall src/DVC2/dvc2.c -o dvc
