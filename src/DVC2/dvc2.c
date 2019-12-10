@@ -15,21 +15,41 @@ int handle = 0;
 
 #define NVAPI_MAX_PHYSICAL_GPUS   64
 #define MAX_DV_LEVEL 63
+#define NV_ERROR -1
 
 int main(int argc, char* argv[])
 {
-	if(load_nvapi() == 1)
+	if(load_nvapi() == NV_ERROR)
 	{
 		printf("\nERROR: load_nvapi() failed.");
 		return EXIT_FAILURE;
 	}
 	printf("\nNVAPI Successfully loaded!");
 
-	//Now that the Nvidia API has been initialized, we can start calling other functions.
+	//Now we need to get a handle for the video card
+	if(get_default_handle() == NV_ERROR)
+	{
+		printf("\nERROR: get_default_handle() failed.");
+		return EXIT_FAILURE;
+	}
+
+	//nvapi has been loaded and we've obtained the default handle. Now we need to get the GPU's Digital Vibrance info.
+	//This info will be stored in a NV_DISPLAY_DVC_INFO struct which is defined in dvc2.h
 	NV_DISPLAY_DVC_INFO info = {};
-	get_DV_level(&info);
+	//We pass the struct to get_DV_level() which will get and store the information in the struct.
+	if(get_DV_level(&info) == NV_ERROR)
+	{
+		printf("\nERROR: get_DV_level() failed.");
+		return EXIT_FAILURE;
+	}
+
 	printf("\nDVC Info:\n\tVersion: %d\n\tCurrent Level: %d\n\tMax: %d\n\t", info.version, info.currentDV, info.maxDV);
-	set_DV_level(&info);
+	
+	if(set_DV_level(&info) == NV_ERROR)
+	{
+		printf("\nERROR: set_DV_level() failed.");
+		return EXIT_FAILURE;
+	}
 
 	return EXIT_SUCCESS;
 }
@@ -42,73 +62,69 @@ int load_nvapi()
 	if(nvapi_h == NULL)
 	{
 		printf("\nError: Could not load nvapi.dll");
-		return 1;
+		return NV_ERROR;
 	}
 
-	//nvapi.dll successfully loaded. nv_api now contains a handle that can be used to in GetProcAddress() to
-	//get the address of a DLL function.
+	//Succesfully loaded the nvapi library.
+	//nvapi.dll only exposes one function as an entroy point, which is nvapi_QueryInterface(int offset).
+	//This function must be used and provided with an offset to obtain the address of other functions in the dll.
+	//OFfset values were found at: https://stackoverflow.com/questions/13291783/how-to-get-the-id-memory-address-of-dll-function
+	
+	//First step will be to get the address of nvapi_QueryInterface using Windows GetProcAddress()
 	nvapi_QueryInterface = (nvapi_QueryInterface_t)GetProcAddress(nvapi_h, "nvapi_QueryInterface");
 	if(nvapi_QueryInterface == NULL)
 	{
 		printf("\nERROR: Could not find function NvAPI_QueryInterface");
-		return 1;
+		return NV_ERROR;
 	}
 
-	//nvapi_QueryInterface is a function that is used to get function pointers to other functions in nvapi.dll
-	//Since we have a pointer to nvapi_QueryInterface, we can use that pointer to call it to get other function pointers:
+	//nvapi_QueryInterface is now a pointer to that function in nvapi.dll
+	//We can use that pointer to call it to get other function pointers:
 	nvapi_Initialize = (nvapi_Initialize_t)(*nvapi_QueryInterface)(0x0150E828);
-	// nvapi_GetDVCInfo = (int*)(*nvapi_QueryInterface)(0x4085DE45);
-	// nvapi_EnumNvidiaDisplayHandle = (int*)(*nvapi_QueryInterface)(0x9ABDD40D);
-	// nvapi_SetDVCLevel = (int*)(*nvapi_QueryInterface)(0x172409B4);
-	//Honestly not sure how the hex values are derived, got them from https://github.com/juv/vibranceDLL/blob/master/vibrance/vibrance.cpp
-	//Will look into figuring out how that was done later.
+	//I'm uncertain if there is a way to derive that hex value, but again, I found them at:
+	//https://stackoverflow.com/questions/13291783/how-to-get-the-id-memory-address-of-dll-function
 	
-	//Now that we have the function pointers we need, just need a call to nvapi_Initialize:
+	//Now that we have a pointer to nvapi_Initialize(), we can call it:
 	int success = (*nvapi_Initialize)();
-	if(success == 0)
+	//nvapi_Initiliaze should return 0 if it succeeded.
+	if(success != 0)
 	{
-		return 0;
+		return NV_ERROR;
 	}
 
-	return 1;
+	return 0;
 }
 
-// int get_default_handle()
-// {
-// 	int gpuCount = 0;
-// 	int* gpuHandles[NVAPI_MAX_PHYSICAL_GPUS] = { NULL };
-// 	nvapi_EnumPhysicalGPUs = (nvapi_EnumPhysicalGPUs_t)(*nvapi_QueryInterface)(0xE5AC921F);
-// 	if(nvapi_EnumPhysicalGPUs == NULL)
-// 	{
-// 		printf("\nERROR: Could not find 'nvapi_EnumPhysicalGPUs' function.");
-// 		return -1;
-// 	}
-// 	// printf("\nnvapi_Enum: %X", (int)nvapi_EnumPhysicalGPUs);
-
-// 	(*nvapi_EnumPhysicalGPUs)(gpuHandles, &gpuCount);
-
-// 	printf("\nGPU Count: %d\nGPU Handle: %d", gpuCount, *gpuHandles[0]);
-
-// 	return 0;
-// }
-
-void get_default_handle()
+//get_default_handle() uses NVidia's EnumNvidiaDisplayHandle function to obtain the GPU handle
+//so that we can specify which GPU we want to change the DV on when we call SetDVCLevel()
+int get_default_handle()
 {
 	printf("\nGetting default handle.");
+
+	//Make sure NVAPI was loaded.
+	if(nvapi_QueryInterface == NULL)
+	{
+		printf("\nERROR: NvAPI was not loaded correctly.");
+		return NV_ERROR;
+	}
+
 	//Get EnumNvidiaDisplayHandle function pointer.
 	nvapi_EnumNvidiaDisplayHandle = (nvapi_EnumNvidiaDisplayHandle_t)(*nvapi_QueryInterface)(0x9ABDD40D);
 	if(nvapi_EnumNvidiaDisplayHandle == NULL)
 	{
 		printf("\nERROR: Could find 'EnumNvidiaDisplayHandle' function.");
-		//return -1;
+		return NV_ERROR;
 	}
 	//Call the function using the pointer.
 	int status = (*nvapi_EnumNvidiaDisplayHandle)(0, &handle);
+	//handle is a global variable. We pass the address of it to nvapi_EnumNvidiaDisplayHandle to set the value.
 	if(status != 0)
 	{
 		printf("\nERROR: Could not obtain display handle.");
+		return NV_ERROR;
 	}
 	printf("\nDefault handle obtained.");
+	return 0;
 }
 
 int get_DV_level(NV_DISPLAY_DVC_INFO* info)
@@ -117,7 +133,7 @@ int get_DV_level(NV_DISPLAY_DVC_INFO* info)
 	if(nvapi_QueryInterface == NULL)
 	{
 		printf("\nERROR: NvAPI was not loaded correctly.");
-		return -1;
+		return NV_ERROR;
 	}
 
 	//Now we need to set the nvapi_GetDVCInfo function pointer to the function using nvapi_QueryInterface.
@@ -125,11 +141,8 @@ int get_DV_level(NV_DISPLAY_DVC_INFO* info)
 	if(nvapi_GetDVCInfo == NULL)
 	{
 		printf("\nERROR: Could not find 'GetDVCInfo' function.");
-		return -1;
+		return NV_ERROR;
 	}
-
-	//Now we need to get a handle for the video card and allocate digital vibrance info struct to pass to GetDVCInfo
-	get_default_handle();
 
 	info->version = sizeof(NV_DISPLAY_DVC_INFO) | 0x10000;
 
@@ -138,12 +151,13 @@ int get_DV_level(NV_DISPLAY_DVC_INFO* info)
 	if(status != 0)
 	{
 		printf("\nERROR: Could not get DVC Info.");
-		return -1;
+		return NV_ERROR;
 	}
 
 	return 0;
 }
 
+//Finally we use an if statement to either set the DV to it's max value or it's min value, depending on what it's currently at.
 int set_DV_level(NV_DISPLAY_DVC_INFO* info)
 {
 	if(nvapi_QueryInterface == NULL)

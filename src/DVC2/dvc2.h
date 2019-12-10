@@ -13,6 +13,6 @@ typedef int (*nvapi_EnumPhysicalGPUs_t)(int** handles, int* count);
 typedef int (*nvapi_SetDVCLevel_t)(int handle, int outputId, int level);
 
 int load_nvapi();
-void get_default_handle();
+int get_default_handle();
 int get_DV_level(NV_DISPLAY_DVC_INFO* info);
 int set_DV_level(NV_DISPLAY_DVC_INFO* info);
